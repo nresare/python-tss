@@ -1,6 +1,8 @@
 from interface import tss_lib, ffi
 import tspi_exceptions
 import hashlib
+import struct
+import uuid
 
 
 def uuid_to_tss_uuid(uuid):
@@ -20,6 +22,13 @@ def uuid_to_tss_uuid(uuid):
 
     return tss_uuid
 
+def tss_uuid_to_uuid(tss_uuid):
+    """Converts a TSS UUID to a Python UUID"""
+    node = struct.unpack(">Q", ffi.buffer(tss_uuid.rgbNode, 6)[:].rjust(8, '\00'))[0]
+    return uuid.UUID(
+        fields=(tss_uuid.ulTimeLow, tss_uuid.usTimeMid, tss_uuid.usTimeHigh,
+                tss_uuid.bClockSeqHigh, tss_uuid.bClockSeqLow, node)
+    )
 
 class TspiObject(object):
     def __init__(self, context, ctype, tss_type, flags, handle=None):
@@ -576,3 +585,20 @@ class TspiContext():
     def get_tpm_object(self):
         """Returns the TspiTPM associated with this context"""        
         return self.tpm
+
+    def list_keys(self):
+        """
+        Return a tuple of uuid.UUID instances and storagetype values for all
+        available keys on the TPM.
+        """
+        count = ffi.new('UINT32 *')
+        key_info_value = ffi.new('TSS_KM_KEYINFO2**')
+        tss_lib.Tspi_Context_GetRegisteredKeysByUUID2(
+            self.context, 1, ffi.NULL, count, key_info_value)
+        values = []
+        for i in range(count[0]):
+            key_info = key_info_value[0][i]
+            values.append(
+                (tss_uuid_to_uuid(key_info.keyUUID), key_info.persistentStorageType)
+            )
+        return tuple(values)
